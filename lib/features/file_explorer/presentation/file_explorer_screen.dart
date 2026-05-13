@@ -3,13 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/providers/file_explorer_provider.dart';
+import '../../../shared/providers/editor_provider.dart';
+import '../../editor/presentation/editor_screen.dart';
 import 'file_tree_widget.dart';
 
-class FileExplorerScreen extends ConsumerWidget {
+class FileExplorerScreen extends ConsumerStatefulWidget {
   const FileExplorerScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FileExplorerScreen> createState() => _FileExplorerScreenState();
+}
+
+class _FileExplorerScreenState extends ConsumerState<FileExplorerScreen> {
+  @override
+  Widget build(BuildContext context) {
     final currentDir = ref.watch(currentDirectoryProvider);
     final fileTree = ref.watch(fileTreeProvider);
 
@@ -42,6 +49,11 @@ class FileExplorerScreen extends ConsumerWidget {
             icon: const Icon(Icons.folder_open),
             tooltip: 'Open Folder',
             onPressed: () => _openFolder(context, ref),
+          ),
+          IconButton(
+            icon: const Icon(Icons.file_open),
+            tooltip: 'Open File',
+            onPressed: () => _openFile(context, ref),
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -92,6 +104,12 @@ class FileExplorerScreen extends ConsumerWidget {
             icon: const Icon(Icons.folder_open),
             label: const Text('Open Folder'),
           ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => _openFile(context, ref),
+            icon: const Icon(Icons.file_open),
+            label: const Text('Open File'),
+          ),
         ],
       ),
     );
@@ -110,6 +128,38 @@ class FileExplorerScreen extends ConsumerWidget {
     if (result != null) {
       ref.read(currentDirectoryProvider.notifier).state = result;
       ref.read(fileTreeProvider.notifier).loadDirectory(result);
+    }
+  }
+
+  Future<void> _openFile(BuildContext context, WidgetRef ref) async {
+    final result = await FilePicker.platform.pickFiles();
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      if (file.path != null) {
+        final fileName = file.name;
+        final repository = ref.read(fileRepositoryProvider);
+        try {
+          final content = await repository.readFile(file.path!);
+          ref.read(openTabsProvider.notifier).openTab(EditorTab(
+            path: file.path!,
+            name: fileName,
+            content: content,
+          ));
+
+          if (context.mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const EditorScreen()),
+            );
+          }
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to open file: $e')),
+            );
+          }
+        }
+      }
     }
   }
 }

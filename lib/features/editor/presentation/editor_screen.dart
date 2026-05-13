@@ -6,41 +6,68 @@ import '../../../shared/providers/file_explorer_provider.dart';
 import 'tab_bar_widget.dart';
 import 'editor_view.dart';
 
-class EditorScreen extends ConsumerWidget {
+class EditorScreen extends ConsumerStatefulWidget {
   const EditorScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final tabs = ref.watch(openTabsProvider);
-    final activeIndex = ref.watch(activeTabIndexProvider);
-    final selectedFile = ref.watch(selectedFileProvider);
+  ConsumerState<EditorScreen> createState() => _EditorScreenState();
+}
 
-    // Open file when selected
+class _EditorScreenState extends ConsumerState<EditorScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Open file when screen is opened with a selected file
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openSelectedFile();
+    });
+  }
+
+  void _openSelectedFile() {
+    final selectedFile = ref.read(selectedFileProvider);
+    final tabs = ref.read(openTabsProvider);
+
     if (selectedFile != null) {
       final existingTab = tabs.where((t) => t.path == selectedFile.path).firstOrNull;
       if (existingTab == null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          final repository = ref.read(fileRepositoryProvider);
-          try {
-            final content = await repository.readFile(selectedFile.path);
-            ref.read(openTabsProvider.notifier).openTab(EditorTab(
-              path: selectedFile.path,
-              name: selectedFile.name,
-              content: content,
-            ));
-          } catch (e) {
-            // Handle error silently
-          }
-        });
+        _loadAndOpenFile(selectedFile.path, selectedFile.name);
       }
     }
+  }
+
+  Future<void> _loadAndOpenFile(String path, String name) async {
+    final repository = ref.read(fileRepositoryProvider);
+    try {
+      final content = await repository.readFile(path);
+      ref.read(openTabsProvider.notifier).openTab(EditorTab(
+        path: path,
+        name: name,
+        content: content,
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to open file: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs = ref.watch(openTabsProvider);
+    final activeIndex = ref.watch(activeTabIndexProvider);
+
+    // Ensure there's always content to show
+    final hasTabs = tabs.isNotEmpty;
+    final activeTab = hasTabs && activeIndex < tabs.length ? tabs[activeIndex] : null;
 
     return Scaffold(
       body: Column(
         children: [
-          _buildToolbar(context, ref),
+          _buildToolbar(context, ref, hasTabs),
           const Divider(height: 1),
-          if (tabs.isNotEmpty) ...[
+          if (hasTabs) ...[
             TabBarWidget(
               tabs: tabs,
               activeIndex: activeIndex,
@@ -50,15 +77,22 @@ class EditorScreen extends ConsumerWidget {
               onTabClosed: (index) {
                 final tab = tabs[index];
                 ref.read(openTabsProvider.notifier).closeTab(tab.path);
+                // Adjust active index if needed
+                final newTabs = ref.read(openTabsProvider);
+                if (newTabs.isEmpty) {
+                  ref.read(activeTabIndexProvider.notifier).state = 0;
+                } else if (activeIndex >= newTabs.length) {
+                  ref.read(activeTabIndexProvider.notifier).state = newTabs.length - 1;
+                }
               },
             ),
             const Divider(height: 1),
             Expanded(
-              child: tabs.isNotEmpty && activeIndex < tabs.length
-                  ? EditorView(tab: tabs[activeIndex])
+              child: activeTab != null
+                  ? EditorView(tab: activeTab)
                   : _buildEmptyState(),
             ),
-            _buildStatusBar(tabs.isNotEmpty && activeIndex < tabs.length ? tabs[activeIndex] : null),
+            _buildStatusBar(activeTab),
           ] else
             Expanded(child: _buildEmptyState()),
         ],
@@ -66,7 +100,7 @@ class EditorScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildToolbar(BuildContext context, WidgetRef ref) {
+  Widget _buildToolbar(BuildContext context, WidgetRef ref, bool hasTabs) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: 48,
@@ -77,13 +111,23 @@ class EditorScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.arrow_back),
             tooltip: 'Back',
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              // Clear selection and go back
+              ref.read(selectedFileProvider.notifier).state = null;
+              Navigator.pop(context);
+            },
           ),
           const Spacer(),
+          if (hasTabs)
+            IconButton(
+              icon: const Icon(Icons.save),
+              tooltip: 'Save',
+              onPressed: () => _saveCurrentFile(ref),
+            ),
           IconButton(
             icon: const Icon(Icons.search),
             tooltip: 'Search',
-            onPressed: () {},
+            onPressed: hasTabs ? () {} : null,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -95,6 +139,33 @@ class EditorScreen extends ConsumerWidget {
     );
   }
 
+  void _saveCurrentFile(WidgetRef ref) async {
+    final tabs = ref.read(openTabsProvider);
+    final activeIndex = ref.read(activeTabIndexProvider);
+
+    if (tabs.isEmpty || activeIndex >= tabs.length) return;
+
+    final tab = tabs[activeIndex];
+    final repository = ref.read(fileRepositoryProvider);
+
+    try {
+      await repository.writeFile(tab.path, tab.content);
+      ref.read(openTabsProvider.notifier).markTabSaved(tab.path);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File saved'), duration: Duration(seconds: 1)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save: $e')),
+        );
+      }
+    }
+  }
+
   Widget _buildEmptyState() {
     return const Center(
       child: Column(
@@ -102,7 +173,7 @@ class EditorScreen extends ConsumerWidget {
         children: [
           Icon(Icons.code, size: 64, color: Colors.grey),
           SizedBox(height: 16),
-          Text('Select a file to edit'),
+          Text('No file selected'),
         ],
       ),
     );
