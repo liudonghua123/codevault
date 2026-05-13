@@ -64,6 +64,12 @@ jobs:
             ${{ runner.os }}-flutter-${{ env.flutter_version }}-
             ${{ runner.os }}-flutter-
 
+      - name: Setup Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update -y && sudo apt-get upgrade -y
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev
+
       - name: Get Dependencies
         run: flutter pub get
 
